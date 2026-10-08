@@ -20,34 +20,34 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Unzip / locate project
+      - name: Unzip project
         run: |
-          if ls *.zip >/dev/null 2>&1; then
-            mkdir -p _unz && unzip -o -q ./*.zip -d _unz
-            CFG=$(find _unz -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
-          else
-            CFG=$(find . -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
-          fi
+          ZIP=$(ls -t *.zip | head -n1)
+          echo "Using: $ZIP"
+          mkdir -p _unz
+          unzip -o -q "$ZIP" -d _unz
+          CFG=$(find _unz -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
           [ -n "$CFG" ] || { echo "capacitor.config.json not found"; exit 1; }
           echo "PROJECT=$(dirname "$CFG")" >> "$GITHUB_ENV"
 
-      - name: Add Three.js locally (offline play)
+      - name: Bundle Three.js for offline play
         working-directory: ${{ env.PROJECT }}
         run: |
           mkdir -p www/lib
           curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js -o www/lib/three.min.js
 
-      - name: Install Capacitor and add Android
+      - name: Install Capacitor and add Android platform
         working-directory: ${{ env.PROJECT }}
         run: |
           npm install
-          [ -d android ] || npx cap add android
+          npx cap add android
 
-      - name: Force landscape
+      - name: Lock landscape
         working-directory: ${{ env.PROJECT }}
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          grep -q screenOrientation "$M" || sed -i 's/<activity /<activity android:screenOrientation="sensorLandscape" /' "$M"
+          grep -q screenOrientation "$M" || perl -0pi -e 's/<activity\b/<activity android:screenOrientation="sensorLandscape"/' "$M"
+          grep -n screenOrientation "$M"
 
       - name: Sync web assets
         working-directory: ${{ env.PROJECT }}
@@ -57,7 +57,7 @@ jobs:
         working-directory: ${{ env.PROJECT }}/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
