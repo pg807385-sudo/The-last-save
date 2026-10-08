@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +25,6 @@ jobs:
       - name: Unzip project
         run: |
           ZIP=$(ls -t *.zip | head -n1)
-          echo "Using: $ZIP"
           mkdir -p _unz
           unzip -o -q "$ZIP" -d _unz
           CFG=$(find _unz -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
@@ -42,12 +43,16 @@ jobs:
           npm install
           npx cap add android
 
+      - name: Generate app icon and splash
+        working-directory: ${{ env.PROJECT }}
+        run: |
+          if [ -f assets/icon-only.png ]; then npx --yes @capacitor/assets generate --android; fi
+
       - name: Lock landscape
         working-directory: ${{ env.PROJECT }}
         run: |
           M=android/app/src/main/AndroidManifest.xml
           grep -q screenOrientation "$M" || perl -0pi -e 's/<activity\b/<activity android:screenOrientation="sensorLandscape"/' "$M"
-          grep -n screenOrientation "$M"
 
       - name: Sync web assets
         working-directory: ${{ env.PROJECT }}
@@ -61,5 +66,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: the-last-save-apk
+          name: the-last-save-debug-apk
           path: ${{ env.PROJECT }}/android/app/build/outputs/apk/debug/*.apk
+
+      - name: Build and sign release APK
+        if: env.HAS_KEYSTORE == 'true'
+        working-directory: ${{ env.PROJECT }}/android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > ../release.jks
+          ./gradlew assembleRelease --no-daemon
+          APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | tail -n1)
+          UNSIGNED=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          $APKSIGNER sign --ks ../release.jks --ks-pass pass:$KS_PASS --key-pass pass:$KEY_PASS --ks-key-alias $KEY_ALIAS --out app/build/outputs/apk/release/the-last-save-release.apk "$UNSIGNED"
+
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          name: the-last-save-release-apk
+          path: ${{ env.PROJECT }}/android/app/build/outputs/apk/release/the-last-save-release.apk
