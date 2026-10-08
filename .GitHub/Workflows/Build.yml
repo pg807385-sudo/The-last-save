@@ -1,0 +1,65 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Unzip / locate project
+        run: |
+          if ls *.zip >/dev/null 2>&1; then
+            mkdir -p _unz && unzip -o -q ./*.zip -d _unz
+            CFG=$(find _unz -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
+          else
+            CFG=$(find . -name capacitor.config.json -not -path "*/node_modules/*" | head -n1)
+          fi
+          [ -n "$CFG" ] || { echo "capacitor.config.json not found"; exit 1; }
+          echo "PROJECT=$(dirname "$CFG")" >> "$GITHUB_ENV"
+
+      - name: Add Three.js locally (offline play)
+        working-directory: ${{ env.PROJECT }}
+        run: |
+          mkdir -p www/lib
+          curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js -o www/lib/three.min.js
+
+      - name: Install Capacitor and add Android
+        working-directory: ${{ env.PROJECT }}
+        run: |
+          npm install
+          [ -d android ] || npx cap add android
+
+      - name: Force landscape
+        working-directory: ${{ env.PROJECT }}
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q screenOrientation "$M" || sed -i 's/<activity /<activity android:screenOrientation="sensorLandscape" /' "$M"
+
+      - name: Sync web assets
+        working-directory: ${{ env.PROJECT }}
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: the-last-save-apk
+          path: ${{ env.PROJECT }}/android/app/build/outputs/apk/debug/*.apk
